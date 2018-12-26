@@ -1,0 +1,163 @@
+---
+- hosts: k8s-src
+  become: yes
+  gather_facts: true
+  remote_user: "{{ user }}"
+
+  vars: 
+    ntp_manage_config: true
+    ntp_timezone: America/New_York
+    firewall_state: started
+    firewall_enabled_at_boot: true
+    firewall_allowed_tcp_ports:
+      - "22"
+      - "80"
+      - "443"
+      - "8052"
+      - "8080"
+    firewall_additional_rules:
+      - "iptables -A INPUT -p icmp -m comment --comment '000 accept all icmp' -j ACCEPT"
+      - "iptables -A INPUT -i lo -m comment --comment '001 accept all to lo interface' -j ACCEPT"
+      - "iptables -A INPUT -m comment --comment '003 accept related established rules' -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT"
+      - "iptables -A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT"
+      - "iptables -A INPUT -p icmp -j ACCEPT"
+      - "iptables -A INPUT -i lo -j ACCEPT"
+      - "iptables -A OUTPUT -o lo -j ACCEPT"
+      - "iptables -A INPUT -m comment --comment '910 deny all other input requests' -j DROP"
+    firewall_disable_firewalld: true
+    gopath_k8s: "~{{ user }}/go/src/k8s.io/kubernetes"
+    packages:
+      - device-mapper-persistent-data
+      - docker-ce
+      - gcc
+      - git
+      - golang
+      - lvm2
+      - net-tools
+    user: vagrant
+  
+  tasks:
+    - name: epel
+      yum:
+        name: epel-release
+        state: latest
+
+    - name: yum -y update
+      yum:
+        name: '*'
+        state: latest
+
+    - name: Add docker-ce.repo
+      get_url:
+        url: https://download.docker.com/linux/centos/docker-ce.repo
+        dest: /etc/yum.repos.d/docker-ce.repo
+
+    - name: installs k8s dipendencies
+      yum:
+        name: "{{ packages }}"
+
+    - name: yum clean all
+      command: yum clean all
+      args:
+        warn: no
+
+    - name: Set GOPATH
+      lineinfile:
+        path: "~{{ user }}/.bashrc"
+        line: export GOPATH=/usr/lib/golang
+        insertafter: EOF
+        state: present
+
+    - name: Add go to PATH
+      lineinfile:
+        path: "~{{ user }}/.bashrc"
+        line: export PATH=${PATH}:/usr/local/go/bin
+        insertafter: EOF
+        state: present
+
+    - name: Add GOPATH_K8S
+      lineinfile:
+        path: "~{{ user }}/.bashrc"
+        line: export GOPATH_K8S=${HOME}/go/src/k8s.io/kubernetes
+        insertafter: EOF
+        state: present
+
+    - name: Add GOPATH_K8S to PATH
+      lineinfile:
+        path: "~{{ user }}/.bashrc"
+        line: export PATH=${GOPATH_K8S}/third_party/etcd:${PATH}
+        insertafter: EOF
+        state: present
+
+    - name: export KUBERNETES_PROVIDER 
+      lineinfile:
+        path: "~{{ user }}/.bashrc"
+        line: export KUBERNETES_PROVIDER=local
+        insertafter: EOF
+        state: present
+
+    - name: export KUBERCONFIG 
+      lineinfile:
+        path: "~{{ user }}/.bashrc"
+        line: export KUBERCONFIG=/var/rn/kubernetes/admin.kubeconfig
+        insertafter: EOF
+        state: present
+
+    - name: mkdir $GOPATH_K8S
+      file:
+        path: "{{ gopath_k8s }}"
+        state: directory
+        owner: "{{ user }}"
+        group: "{{ user }}"
+        mode: 0755
+
+    - name: git clone kubernetes
+      git:
+        repo: https://github.com/flannon/kubernetes.git
+        dest: "{{ gopath_k8s }}/"
+        version: master
+      become: yes
+      become_user: "{{ user }}"
+
+    - name: set upstream
+      # This is a bit of a kluge, but I couldn't figure out how
+      # to configure upstream from the git module
+      command: "git remote add upstream https://github.com/kubernetes/kubernetes.git"
+      args: 
+        chdir: "{{ gopath_k8s }}"
+      ignore_errors: yes
+
+    - name: link k8s src in shared dir
+      file:
+        src: "{{ gopath_k8s }}"
+        dest: "/vagrant/kubernetes"
+        state: link
+
+        
+    - name: install etcd
+      command: hack/install-etcd.sh
+      args:
+        chdir: "{{ gopath_k8s }}"
+        
+    - name: adding '{{ user }}' to docker group
+      user:
+        name: '{{ user }}'
+        groups: docker
+        append: yes
+
+    - name: start docker
+      systemd:
+        name: docker
+        enabled: true
+        state: started
+
+
+  roles:
+   - housekeeping
+   - vim
+    #- firewall
+    #- ntp
+    #- logrotate
+
+
+

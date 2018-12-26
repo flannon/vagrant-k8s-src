@@ -1,0 +1,15 @@
+---
+localhost:
+  hosts:
+    localhost
+  vars:
+    ansible_connection: local
+
+k8s-src:
+  hosts:
+    k8s-src.lab.example.com
+
+oc-src:
+  hosts:
+    oc-src.lab.example.com
+
